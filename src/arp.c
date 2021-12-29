@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 
 #include "include/arp.h"
+#include "include/__generated__oui_array.h"
 
 int socket_create_on_promisc_interface(int domain, int type, int protocol,
                                        const char *ifacename)
@@ -78,6 +79,69 @@ int arp_capture(int fd, uint8_t *buffer)
     return 0;
 }
 
+/*
+ * Searches first size bytes of s1 in
+ * first argument of __generated__oui_array
+ * */
+static int binary_search(const char *s1, int size)
+{
+    int lower = 0;
+    int mid;
+    int upper = __generated__oui_array_length;
+    int cmp;
+
+    while (lower + 1 < upper) {
+        mid = (lower + upper) / 2;
+
+        cmp = strncmp(s1, __generated__oui_array[mid][0], size);
+        if (cmp == 0)
+            return mid;
+        else if (cmp < 0)
+            upper = mid;
+        else if (cmp > 0)
+            lower = mid;
+    }
+
+    return -1;
+}
+
+static inline int mac_is_zero(const uint8_t *mac)
+{
+    return !(mac[0] | mac[1] | mac[2] | mac[3] | mac[4] | mac[5]);
+}
+
+static inline int mac_is_broadcast(const uint8_t *mac)
+{
+  return ((mac[0] & mac[1] & mac[2] & mac[3] & mac[4] & mac[5]) ==
+          (uint8_t)0xFF);
+}
+
+/* Binary searches vendor by the first three bytes of mac address */
+static void mac_vendor_parse(const uint8_t *mac)
+{
+#define VENDOR_BYTES_SIZE 9 /* XX:XX:XX'\0' */
+    int id;
+    char vendor_bytes_str[VENDOR_BYTES_SIZE];
+
+    if (mac_is_zero(mac)) {
+        printf("Zero\n");
+        return;
+    } else if (mac_is_broadcast(mac)) {
+        printf("Broadcast\n");
+        return;
+    }
+
+    snprintf(vendor_bytes_str, VENDOR_BYTES_SIZE, "%02X:%02X:%02X",
+             mac[0], mac[1], mac[2]);
+
+    id = binary_search(vendor_bytes_str, VENDOR_BYTES_SIZE);
+    if (id != -1)
+        printf("%s\n", __generated__oui_array[id][1]);
+    else
+        printf("No oui data\n");
+#undef VENDOR_SYMBOLS
+}
+
 #define MAC_PRINTF_FORMAT  "%02X:%02X:%02X:%02X:%02X:%02X"
 #define MAC_PRINTF_ARGS(p) ((unsigned) ((uint8_t*)(p))[0]), \
                            ((unsigned) ((uint8_t*)(p))[1]), \
@@ -105,10 +169,13 @@ void arp_print(struct arphdr *arp)
               inet_ntoa(sender_ip), MAC_PRINTF_ARGS(arp->target_mac));
     }
 
-    printf("Sender MAC: " MAC_PRINTF_FORMAT " \n",
+    printf("Sender MAC: "MAC_PRINTF_FORMAT", ",
            MAC_PRINTF_ARGS(arp->sender_mac));
-    printf("Target MAC: " MAC_PRINTF_FORMAT " \n",
-           MAC_PRINTF_ARGS(arp->target_mac));
-    printf("-----------------------------------\n");
+    mac_vendor_parse(arp->sender_mac);
 
+    printf("Target MAC: "MAC_PRINTF_FORMAT", ",
+           MAC_PRINTF_ARGS(arp->target_mac));
+    mac_vendor_parse(arp->target_mac);
+
+    printf("-----------------------------------\n");
 }
